@@ -287,8 +287,8 @@ if __name__ == "__main__":
 
     T=int(sys.argv[1])
     nsim=int(sys.argv[2])
-    mapDF=pd.read_table('/fs/cbsubscb09/storage/resources/genetic_maps/refined_mf.simmap')
-
+    mapDF=pd.read_table(sys.argv[3])
+    
     seed = datetime.now().timestamp()
     random.seed(seed)
     print("Seed used:", seed)
