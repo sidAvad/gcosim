@@ -18,7 +18,7 @@ def sample_breakpoints(mapDF_c,sex,options):
     if sex == 'male':
         genetic_positions=mapDF_c['male_cM'].tolist()
     elif sex == 'female':
-        genetic_positions=mapDF_c['male_cM'].tolist()
+        genetic_positions=mapDF_c['female_cM'].tolist()
     else:
         sys.exit('invalid sex specification')   
 
@@ -37,7 +37,7 @@ def sample_breakpoints(mapDF_c,sex,options):
 
     #Add complex gcos
     complexgco_breakpoints=[]   
-    for (bp,gco_status) in all_breakpoints_physical: #TODO: Bug : We should be looping only over the recombination breakpoints.
+    for (bp,gco_status) in recomb_breakpoints_physical: #TODO: Bug : We should be looping only over the recombination breakpoints.
         dice_roll=random.choice(list(range(options['beta'])))
         if dice_roll == 1:
             complexgco_loc=bp + np.rint(np.random.normal(loc=0, scale=options['dist']))
@@ -85,7 +85,8 @@ def transmit_segments(breakpoints,inherited_segments):
         for h in [0,1]:
             inherited_segmentbounds.append([d['start'] for d in inherited_segments[h]] + [inherited_segments[h][-1]['end']])
         j=1 #index for inherited_segments
-        copying_hap=0 #start copying path from haplotype 0 for each chromosome 
+        #copying_hap=0 #start copying path from haplotype 0 for each chromosome; TODO: random(0,1) 
+        copying_hap=random.randint(0,1) #start copying path randomly from haplotype 0 or haplotype 1 for each chromosome
         writeseg=dict(inherited_segments[copying_hap][j-1])
         for bpno,(r,gco_endpoint) in enumerate(breakpoints):
             #Add first set of segments (added segments are always behind current recombination)
@@ -103,10 +104,12 @@ def transmit_segments(breakpoints,inherited_segments):
                         writeseg['gco']=False
                     #print('added segments and switch : {};{}'.format(writeseg,j))
                     writesegs.append(writeseg)
+                    prevhap=writeseg['hap'] # record the previous haplotype broken by bp as recipient haplotype
                     copying_hap=not copying_hap  # Switch haplotype only if we reach the recombination
                     j=bisect(inherited_segmentbounds[copying_hap],r) #Find segment recombination falls in on switched haplotype
                     writeseg=dict(inherited_segments[copying_hap][j-1])
                     writeseg['start']=r
+                    writeseg['hapopp']=prevhap # record the recipient haplotype of current haplotype
                     break
 
         #Add segments after final recombination 
@@ -121,7 +124,7 @@ def transmit_segments(breakpoints,inherited_segments):
 
 def merge_adjacent(inherited_segments_hap):
     merged_segments_hap=[]
-    prev_d={'start':None,'stop':None,'hap':None}
+    prev_d={'start':None,'stop':None,'hap':None, 'hapopp':None} #HAPOPP
     for i,d in enumerate(inherited_segments_hap):
         if d['hap']==prev_d['hap']:
             new_d=d
@@ -145,7 +148,7 @@ class _Node():
         self.mapDF=mapDF
         self.gco_params={'dist':5000,'length':1000,'beta':5,'indep_gco_rate':10}
         self.bpstr_recomb=[[],[]]
-        self.bpstr_gco=[[],[]]
+        self.df_gco=None
 
         self.breakpoints=[[]]*22
         self.transmitted_segments=[[None]]*22
@@ -197,14 +200,20 @@ class _Node():
     
     def generate_bplines_gco(self):
         headers=['g{}_i{}_s{}_h0'.format(self.generation,self.idno,self.simno),'g{}_i{}_s{}_h1'.format(self.generation,self.idno,self.simno)]
-    
+        gco_dict_list = []
         for h in [0,1]:
-            bpstr_list=[]
+            #gco_table=pd.DataFrame()
+            
             for c in range(1,23):
                 l=self.inherited_segments[c-1][h]
-                str_c = '{}|'.format(c)+str(int(l[0]['start']))+' '+''.join(['{}/{}:{} '.format(d['hap'],int(d['start']),int(d['end'])) for d in l if d['gco']==True])[:-1] #TODO:Convert to integer in transmit_segments rather than here
-                bpstr_list.append(str_c + ' ')
-                self.bpstr_gco[h]=headers[h] + ' ' + ''.join(bpstr_list)[:-1]
+                #str_c = '{}|'.format(c)+str(int(l[0]['start']))+' '+''.join(['{}/{}:{} '.format(d['hap'],int(d['start']),int(d['end'])) for d in l if d['gco']==True])[:-1] #TODO:Convert to integer in transmit_segments rather than here
+                #gco_table.append(str_c + ' ')
+                #self.bpstr_gco[h]=headers[h] + ' ' + ''.join(gco_table)[:-1]
+                for d in l:
+                    if d['gco']:
+                        d['chr'] = c
+                        gco_dict_list.append(d)
+        self.df_gco=pd.DataFrame(gco_dict_list)
 
 class ChildNode(_Node):
     '''
@@ -239,8 +248,10 @@ class FounderNode(_Node):
         super().__init__(idno,sex,mapDF)
         self.simno=simno
         self.inherited_segments=[\
-                [[{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno-1),'gco':False}],\
-                [{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno),'gco':False}]]\
+                #[[{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno-1),'gco':False}],\
+                #[{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno),'gco':False}]]\
+                [[{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno-1),'hapopp':str(2*self.idno),'gco':False}],\
+                [{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno),'hapopp':str(2*self.idno-1),'gco':False}]]\
                 for c in range(1,23)]
         self.generation=0
 
@@ -278,8 +289,9 @@ if __name__ == "__main__":
         with open(outfile+'_{}.recomb.bp'.format(nsim),'w') as f:
             f.write('\n'.join(tree[T][0].bpstr_recomb))
 
-        with open(outfile+'_{}.gco.bp'.format(nsim),'w') as f:
-            f.write('\n'.join(tree[T][0].bpstr_gco))
+        #with open(outfile+'_{}.gco.bp'.format(nsim),'w') as f:
+        #    f.write('\n'.join(tree[T][0].df_gco))
+        tree[T][0].df_gco.to_csv(outfile+'_{}.gco.bp'.format(nsim), sep='\t', index=False)
 
         #print(tree[T][0].inherited_segments)
 
