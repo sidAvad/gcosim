@@ -45,8 +45,15 @@ def sample_breakpoints(mapDF_c,sex,options):
         else:
             continue
 
-    #print('complexgco bps : {}'.format(complexgco_breakpoints))
-    breakpoints_final=all_breakpoints_physical+complexgco_breakpoints
+    #Add gcos linear to physical distance
+    #gamma=0.1 # Relative proportion of physical gco in relation to independent gco. TODO: Should move the parameter setting to options['phys_gco_prop']
+    scalar = (centimorgan_range[1] - centimorgan_range[0])/(physical_positions[-1] - physical_positions[0])
+    physical_range_scaled = [options['phys_gco_prop']*scalar*physical_positions[0], options['phys_gco_prop']*scalar*physical_positions[-1]]
+    physicalgco_midpoints=sample_exponentialRecombinations(physical_range_scaled,options['indep_gco_rate'])
+    physicalgco_midpoints=physicalgco_midpoints*(1/scalar)
+    physicalgco_breakpoints=[x for y in [[(math.floor(x - np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50))),False,None),(math.floor(x + np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50))),True,'phys-gco')] for x in physicalgco_midpoints ] for x in y ] 
+
+    breakpoints_final=all_breakpoints_physical+complexgco_breakpoints+physicalgco_breakpoints
     breakpoints_final.sort(key=lambda y:y[0])
 
     return(breakpoints_final)
@@ -146,7 +153,7 @@ class _Node():
         self.idno=idno
         self.sex=sex
         self.mapDF=mapDF
-        self.gco_params={'dist':5000,'length':1000,'beta':5,'indep_gco_rate':10}
+        self.gco_params={'dist':5000,'length':1000,'beta':5,'indep_gco_rate':10,'phys_gco_prop':0.1} # 'phys_gco_prop': the mean proportion of map-independent gcos ('physical gcos') in relation to indepedent gcos
         self.bpstr_recomb=[[],[]]
         self.df_gco=None
 
