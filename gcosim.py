@@ -18,36 +18,73 @@ def sample_breakpoints(mapDF_c,sex,options):
     if sex == 'male':
         genetic_positions=mapDF_c['male_cM'].tolist()
     elif sex == 'female':
-        genetic_positions=mapDF_c['male_cM'].tolist()
+        genetic_positions=mapDF_c['female_cM'].tolist()
     else:
         sys.exit('invalid sex specification')   
 
     centimorgan_range = [genetic_positions[0] , genetic_positions[-1]]
-
-    #Add independent gcos
-    gco_midpoints_genetic=sample_exponentialRecombinations(centimorgan_range,options['indep_gco_rate'])
-    gco_midpoints_physical = np.interp(gco_midpoints_genetic,genetic_positions,physical_positions)
-    gco_breakpoints_physical=[x for y in [[(math.floor(x - np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50))),False),(math.floor(x + np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50))),True)] for x in gco_midpoints_physical ] for x in y ]
-    #print('indep gco bps : {}'.format(gco_breakpoints_physical))
+    # options['length']: fixed gco length    
+    # TODO: Fixed the bug of gco breakpoint samping. Oct 24, 2023
     
-    recomb_breakpoints_genetic=sample_exponentialRecombinations(centimorgan_range)
-    recomb_breakpoints_physical = [(math.floor(x),False) for x in np.interp(recomb_breakpoints_genetic,genetic_positions,physical_positions)] #(note the use of math.floor to round down physical positions from floats to ints )
+    # 1. Sampling recombination breakpoints
+    recomb_breakpoints_genetic = sample_exponentialRecombinations(centimorgan_range)
+    recomb_breakpoints_physical = [(math.floor(x),False,None) for x in np.interp(recomb_breakpoints_genetic,genetic_positions,physical_positions)] #(note the use of math.floor to round down physical positions from floats to ints )
 
-    all_breakpoints_physical=recomb_breakpoints_physical+gco_breakpoints_physical
-
-    #Add complex gcos
-    complexgco_breakpoints=[]   
-    for (bp,gco_status) in all_breakpoints_physical: #TODO: Bug : We should be looping only over the recombination breakpoints.
+    # 2. Sampling simple gco starting breakpoints
+    # uniformed_genetic_positions
+    slope = (genetic_positions[-1] - genetic_positions[0]) / (physical_positions[-1] - physical_positions[0])
+    intercept = genetic_positions[0] - slope * physical_positions[0]
+    uniformed_genetic_positions = slope * np.array(physical_positions) + intercept
+    mixed_genetic_positions = options['alpha'] * uniformed_genetic_positions + (1 - options['alpha']) * np.array(genetic_positions)
+    
+    simplegco_startpoints_genetic = sample_exponentialRecombinations(centimorgan_range, options['simple_gco_rate'])
+    simplegco_startpoints_physical = [(math.floor(x), False, 'simple-gco') for x in np.interp(simplegco_startpoints_genetic, mixed_genetic_positions, physical_positions)] # TODO: checking if this data structure makes sence
+    
+    # 3. Sampling complex gco starting breakpoints
+    complexgco_startpoints = []   
+    for (bp,gco_status, gco_type) in recomb_breakpoints_physical: #TODO: Bug : We should be looping only over the recombination breakpoints.#gco_type added
         dice_roll=random.choice(list(range(options['beta'])))
         if dice_roll == 1:
-            complexgco_loc=bp + np.rint(np.random.normal(loc=0, scale=options['dist']))
-            complexgco_breakpoints.append((complexgco_loc-np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50)),False)) #TODO:use truncated normal (or maybe a different distribution)
-            complexgco_breakpoints.append((complexgco_loc+np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50)),True))
+            complexgco_loc = bp + np.rint(np.random.normal(loc=0, scale=options['dist']))
+            complexgco_startpoints.append((math.floor(complexgco_loc - (options['length'] / 2)), False, 'complex-gco'))
         else:
             continue
     
-    #print('complexgco bps : {}'.format(complexgco_breakpoints))
-    breakpoints_final=all_breakpoints_physical+complexgco_breakpoints
+    # 4. Checking for simulated gcos conflicting with other gcos
+    gco_startpoints_all = simplegco_startpoints_physical + complexgco_startpoints
+    gco_startpoints_all.sort(key = lambda y:y[0])
+    is_no_coflict = np.ones(len(gco_startpoints_all))
+    # loop for invalid gcos before the starting physical position
+    i = 0
+    while i < len(gco_startpoints_all) and gco_startpoints_all[i][0] < physical_positions[0]:
+        is_no_coflict[i] = 0
+        i += 1
+    # loop for invalid gcos beyonds the ending physical position
+    i = len(gco_startpoints_all) - 1
+    while i >= 0 and gco_startpoints_all[i][0] + options['length'] > physical_positions[-1]:
+        is_no_coflict[i] = 0
+        i -= 1
+    # main loop for (1) gcos including a recombination bp; (2) gcos overlapping with previous gcos
+    curr_recomb = 0
+    for i in range(len(gco_startpoints_all)):
+        if is_no_coflict[i]:
+            # (1) gcos including a recombination bp
+            if len(recomb_breakpoints_physical) > 0 and curr_recomb < len(recomb_breakpoints_physical):
+                while curr_recomb < len(recomb_breakpoints_physical) and gco_startpoints_all[i][0] > recomb_breakpoints_physical[curr_recomb][0]:
+                    curr_recomb += 1
+                if curr_recomb < len(recomb_breakpoints_physical): 
+                    if gco_startpoints_all[i][0] <= recomb_breakpoints_physical[curr_recomb][0] and gco_startpoints_all[i][0] + options['length'] >= recomb_breakpoints_physical[curr_recomb][0]:
+                        is_no_coflict[i] = 0
+                        continue
+            # (2) next gcos overlapping with current gco
+            j = i + 1
+            while j < len(gco_startpoints_all) and gco_startpoints_all[i][0] + options['length'] >= gco_startpoints_all[j][0]:
+                is_no_coflict[j] = 0
+                j += 1
+    gco_startpoints_all_final = [gco_startpoints_all[i] for i in range(len(gco_startpoints_all)) if is_no_coflict[i]]
+    gco_endpoints_all_final = [(gco_startpoints_all_final[i][0] + options['length'], True, gco_startpoints_all_final[i][2]) for i in range(len(gco_startpoints_all_final))]    
+    
+    breakpoints_final = recomb_breakpoints_physical + gco_startpoints_all_final + gco_endpoints_all_final
     breakpoints_final.sort(key=lambda y:y[0])
 
     return(breakpoints_final)
@@ -73,6 +110,7 @@ def sample_exponentialRecombinations(centimorgan_range,rate=1):
 
     return(breakpoints)
 
+
 def transmit_segments(breakpoints,inherited_segments):
     '''
     generate transmitted segment give a pair of inherited segments and a set of breakpoints
@@ -85,9 +123,10 @@ def transmit_segments(breakpoints,inherited_segments):
         for h in [0,1]:
             inherited_segmentbounds.append([d['start'] for d in inherited_segments[h]] + [inherited_segments[h][-1]['end']])
         j=1 #index for inherited_segments
-        copying_hap=0 #start copying path from haplotype 0 for each chromosome 
+        #copying_hap=0 #start copying path from haplotype 0 for each chromosome; TODO: random(0,1) 
+        copying_hap=random.randint(0,1) #start copying path randomly from haplotype 0 or haplotype 1 for each chromosome
         writeseg=dict(inherited_segments[copying_hap][j-1])
-        for bpno,(r,gco_endpoint) in enumerate(breakpoints):
+        for bpno,(r,gco_endpoint, gco_type) in enumerate(breakpoints):
             #Add first set of segments (added segments are always behind current recombination)
             while (writeseg['start'] < r):
                 if writeseg['end'] < r:
@@ -99,29 +138,35 @@ def transmit_segments(breakpoints,inherited_segments):
                     writeseg['end']=r
                     if (gco_endpoint==True): #Check if gco_endpoint is true
                         writeseg['gco']=True
+                        writeseg['gco_type']=gco_type # When the new segment is gco, record its gco type
                     else: #If not , segment is a non gco segment
                         writeseg['gco']=False
                     #print('added segments and switch : {};{}'.format(writeseg,j))
                     writesegs.append(writeseg)
+                    prevhap=writeseg['hap'] # record the previous haplotype broken by bp as recipient haplotype
                     copying_hap=not copying_hap  # Switch haplotype only if we reach the recombination
                     j=bisect(inherited_segmentbounds[copying_hap],r) #Find segment recombination falls in on switched haplotype
                     writeseg=dict(inherited_segments[copying_hap][j-1])
                     writeseg['start']=r
+                    writeseg['hapopp']=prevhap # record the recipient haplotype of current haplotype
                     break
 
-        #Add segments after final recombination 
+        #Add segments after final recombination # Bugs fixed here
+        writeseg=dict(inherited_segments[copying_hap][j-1])
+        writeseg['start']=r # update the start point as r
         while (j <= len(inherited_segments[copying_hap])):
-            writeseg=dict(inherited_segments[copying_hap][j-1])
-            writeseg['start']=r
-            writeseg['gco']=False #Final segment cannot be gco because it is bounded by chromosome end
             writesegs.append(writeseg)
-            j+=1
+            if (j == len(inherited_segments[copying_hap])):
+                break
+            else:
+                j=j+1
+                writeseg=dict(inherited_segments[copying_hap][j-1])
 
     return(writesegs)
 
 def merge_adjacent(inherited_segments_hap):
     merged_segments_hap=[]
-    prev_d={'start':None,'stop':None,'hap':None}
+    prev_d={'start':None,'stop':None,'hap':None, 'hapopp':None}
     for i,d in enumerate(inherited_segments_hap):
         if d['hap']==prev_d['hap']:
             new_d=d
@@ -143,9 +188,9 @@ class _Node():
         self.idno=idno
         self.sex=sex
         self.mapDF=mapDF
-        self.gco_params={'dist':5000,'length':1000,'beta':5,'indep_gco_rate':10}
+        self.gco_params={'dist':5000,'length':500,'beta':5,'simple_gco_rate':10,'alpha':0.1} # 'alpha': the weight of uniformed genetic map, where 1 - alpha is the weight of genetic map for recombination
         self.bpstr_recomb=[[],[]]
-        self.bpstr_gco=[[],[]]
+        self.df_gco=None
 
         self.breakpoints=[[]]*22
         self.transmitted_segments=[[None]]*22
@@ -197,14 +242,20 @@ class _Node():
     
     def generate_bplines_gco(self):
         headers=['g{}_i{}_s{}_h0'.format(self.generation,self.idno,self.simno),'g{}_i{}_s{}_h1'.format(self.generation,self.idno,self.simno)]
-    
+        gco_dict_list = []
         for h in [0,1]:
-            bpstr_list=[]
+            #gco_table=pd.DataFrame()
+            
             for c in range(1,23):
                 l=self.inherited_segments[c-1][h]
-                str_c = '{}|'.format(c)+str(int(l[0]['start']))+' '+''.join(['{}/{}:{} '.format(d['hap'],int(d['start']),int(d['end'])) for d in l if d['gco']==True])[:-1] #TODO:Convert to integer in transmit_segments rather than here
-                bpstr_list.append(str_c + ' ')
-                self.bpstr_gco[h]=headers[h] + ' ' + ''.join(bpstr_list)[:-1]
+                #str_c = '{}|'.format(c)+str(int(l[0]['start']))+' '+''.join(['{}/{}:{} '.format(d['hap'],int(d['start']),int(d['end'])) for d in l if d['gco']==True])[:-1] #TODO:Convert to integer in transmit_segments rather than here
+                #gco_table.append(str_c + ' ')
+                #self.bpstr_gco[h]=headers[h] + ' ' + ''.join(gco_table)[:-1]
+                for d in l:
+                    if d['gco']:
+                        d['chr'] = c
+                        gco_dict_list.append(d)
+        self.df_gco=pd.DataFrame(gco_dict_list)
 
 class ChildNode(_Node):
     '''
@@ -239,8 +290,8 @@ class FounderNode(_Node):
         super().__init__(idno,sex,mapDF)
         self.simno=simno
         self.inherited_segments=[\
-                [[{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno-1),'gco':False}],\
-                [{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno),'gco':False}]]\
+                [[{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno-1),'hapopp':str(2*self.idno),'gco':False,'gco_type':None}],\
+                [{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno),'hapopp':str(2*self.idno-1),'gco':False,'gco_type':None}]]\
                 for c in range(1,23)]
         self.generation=0
 
@@ -277,9 +328,9 @@ if __name__ == "__main__":
 
         with open(outfile+'_{}.recomb.bp'.format(nsim),'w') as f:
             f.write('\n'.join(tree[T][0].bpstr_recomb))
-
-        with open(outfile+'_{}.gco.bp'.format(nsim),'w') as f:
-            f.write('\n'.join(tree[T][0].bpstr_gco))
+        df_gco_output=tree[T][0].df_gco
+        del df_gco_output['gco'] # remove the redundant column 'gco' from output (as they must be gcos)
+        tree[T][0].df_gco.to_csv(outfile+'_{}.gco.bp'.format(nsim), sep='\t', index=False)
 
         #print(tree[T][0].inherited_segments)
 
