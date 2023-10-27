@@ -23,37 +23,68 @@ def sample_breakpoints(mapDF_c,sex,options):
         sys.exit('invalid sex specification')   
 
     centimorgan_range = [genetic_positions[0] , genetic_positions[-1]]
+    # options['length']: fixed gco length    
+    # TODO: Fixed the bug of gco breakpoint samping. Oct 24, 2023
+    
+    # 1. Sampling recombination breakpoints
+    recomb_breakpoints_genetic = sample_exponentialRecombinations(centimorgan_range)
+    recomb_breakpoints_physical = [(math.floor(x),False,None) for x in np.interp(recomb_breakpoints_genetic,genetic_positions,physical_positions)] #(note the use of math.floor to round down physical positions from floats to ints )
 
-    #Add independent gcos
-    gco_midpoints_genetic=sample_exponentialRecombinations(centimorgan_range,options['indep_gco_rate'])
-    gco_midpoints_physical = np.interp(gco_midpoints_genetic,genetic_positions,physical_positions)
-    gco_breakpoints_physical=[x for y in [[(math.floor(x - np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50))),False,None),(math.floor(x + np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50))),True,'indep-gco')] for x in gco_midpoints_physical ] for x in y ] # gco_type added: independent gco
-    #print('indep gco bps : {}'.format(gco_breakpoints_physical))
-
-    recomb_breakpoints_genetic=sample_exponentialRecombinations(centimorgan_range)
-    recomb_breakpoints_physical = [(math.floor(x),False,None) for x in np.interp(recomb_breakpoints_genetic,genetic_positions,physical_positions)] #(note the use of math.floor to round down physical positions from floats to ints ) 
-    all_breakpoints_physical=recomb_breakpoints_physical+gco_breakpoints_physical
-
-    #Add complex gcos
-    complexgco_breakpoints=[]   
+    # 2. Sampling simple gco starting breakpoints
+    # uniformed_genetic_positions
+    slope = (genetic_positions[-1] - genetic_positions[0]) / (physical_positions[-1] - physical_positions[0])
+    intercept = genetic_positions[0] - slope * physical_positions[0]
+    uniformed_genetic_positions = slope * np.array(physical_positions) + intercept
+    mixed_genetic_positions = options['alpha'] * uniformed_genetic_positions + (1 - options['alpha']) * np.array(genetic_positions)
+    
+    simplegco_startpoints_genetic = sample_exponentialRecombinations(centimorgan_range, options['simple_gco_rate'])
+    simplegco_startpoints_physical = [(math.floor(x), False, 'simple-gco') for x in np.interp(simplegco_startpoints_genetic, mixed_genetic_positions, physical_positions)] # TODO: checking if this data structure makes sence
+    
+    # 3. Sampling complex gco starting breakpoints
+    complexgco_startpoints = []   
     for (bp,gco_status, gco_type) in recomb_breakpoints_physical: #TODO: Bug : We should be looping only over the recombination breakpoints.#gco_type added
         dice_roll=random.choice(list(range(options['beta'])))
         if dice_roll == 1:
-            complexgco_loc=bp + np.rint(np.random.normal(loc=0, scale=options['dist']))
-            complexgco_breakpoints.append((complexgco_loc-np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50)),False,None)) #TODO:use truncated normal (or maybe a different distribution)
-            complexgco_breakpoints.append((complexgco_loc+np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50)),True,'comp-gco')) # gco_type added: complex gco
+            complexgco_loc = bp + np.rint(np.random.normal(loc=0, scale=options['dist']))
+            complexgco_startpoints.append((math.floor(complexgco_loc - (options['length'] / 2)), False, 'complex-gco'))
         else:
             continue
-
-    #Add gcos linear to physical distance
-    #gamma=0.1 # Relative proportion of physical gco in relation to independent gco. TODO: Should move the parameter setting to options['phys_gco_prop']
-    scalar = (centimorgan_range[1] - centimorgan_range[0])/(physical_positions[-1] - physical_positions[0])
-    physical_range_scaled = [options['phys_gco_prop']*scalar*physical_positions[0], options['phys_gco_prop']*scalar*physical_positions[-1]]
-    physicalgco_midpoints=sample_exponentialRecombinations(physical_range_scaled,options['indep_gco_rate'])
-    physicalgco_midpoints=physicalgco_midpoints*(1/scalar)
-    physicalgco_breakpoints=[x for y in [[(math.floor(x - np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50))),False,None),(math.floor(x + np.rint(np.random.normal(loc=options['length']/2, scale=options['length']/50))),True,'phys-gco')] for x in physicalgco_midpoints ] for x in y ] 
-
-    breakpoints_final=all_breakpoints_physical+complexgco_breakpoints+physicalgco_breakpoints
+    
+    # 4. Checking for simulated gcos conflicting with other gcos
+    gco_startpoints_all = simplegco_startpoints_physical + complexgco_startpoints
+    gco_startpoints_all.sort(key = lambda y:y[0])
+    is_no_coflict = np.ones(len(gco_startpoints_all))
+    # loop for invalid gcos before the starting physical position
+    i = 0
+    while i < len(gco_startpoints_all) and gco_startpoints_all[i][0] < physical_positions[0]:
+        is_no_coflict[i] = 0
+        i += 1
+    # loop for invalid gcos beyonds the ending physical position
+    i = len(gco_startpoints_all) - 1
+    while i >= 0 and gco_startpoints_all[i][0] + options['length'] > physical_positions[-1]:
+        is_no_coflict[i] = 0
+        i -= 1
+    # main loop for (1) gcos including a recombination bp; (2) gcos overlapping with previous gcos
+    curr_recomb = 0
+    for i in range(len(gco_startpoints_all)):
+        if is_no_coflict[i]:
+            # (1) gcos including a recombination bp
+            if len(recomb_breakpoints_physical) > 0 and curr_recomb < len(recomb_breakpoints_physical):
+                while curr_recomb < len(recomb_breakpoints_physical) and gco_startpoints_all[i][0] > recomb_breakpoints_physical[curr_recomb][0]:
+                    curr_recomb += 1
+                if curr_recomb < len(recomb_breakpoints_physical): 
+                    if gco_startpoints_all[i][0] <= recomb_breakpoints_physical[curr_recomb][0] and gco_startpoints_all[i][0] + options['length'] >= recomb_breakpoints_physical[curr_recomb][0]:
+                        is_no_coflict[i] = 0
+                        continue
+            # (2) next gcos overlapping with current gco
+            j = i + 1
+            while j < len(gco_startpoints_all) and gco_startpoints_all[i][0] + options['length'] >= gco_startpoints_all[j][0]:
+                is_no_coflict[j] = 0
+                j += 1
+    gco_startpoints_all_final = [gco_startpoints_all[i] for i in range(len(gco_startpoints_all)) if is_no_coflict[i]]
+    gco_endpoints_all_final = [(gco_startpoints_all_final[i][0] + options['length'], True, gco_startpoints_all_final[i][2]) for i in range(len(gco_startpoints_all_final))]    
+    
+    breakpoints_final = recomb_breakpoints_physical + gco_startpoints_all_final + gco_endpoints_all_final
     breakpoints_final.sort(key=lambda y:y[0])
 
     return(breakpoints_final)
@@ -78,6 +109,7 @@ def sample_exponentialRecombinations(centimorgan_range,rate=1):
         sampler_current_position = next_position
 
     return(breakpoints)
+
 
 def transmit_segments(breakpoints,inherited_segments):
     '''
@@ -119,13 +151,16 @@ def transmit_segments(breakpoints,inherited_segments):
                     writeseg['hapopp']=prevhap # record the recipient haplotype of current haplotype
                     break
 
-        #Add segments after final recombination 
+        #Add segments after final recombination # Bugs fixed here
+        writeseg=dict(inherited_segments[copying_hap][j-1])
+        writeseg['start']=r # update the start point as r
         while (j <= len(inherited_segments[copying_hap])):
-            writeseg=dict(inherited_segments[copying_hap][j-1])
-            writeseg['start']=r
-            writeseg['gco']=False #Final segment cannot be gco because it is bounded by chromosome end
             writesegs.append(writeseg)
-            j+=1
+            if (j == len(inherited_segments[copying_hap])):
+                break
+            else:
+                j=j+1
+                writeseg=dict(inherited_segments[copying_hap][j-1])
 
     return(writesegs)
 
@@ -153,7 +188,7 @@ class _Node():
         self.idno=idno
         self.sex=sex
         self.mapDF=mapDF
-        self.gco_params={'dist':5000,'length':1000,'beta':5,'indep_gco_rate':10,'phys_gco_prop':0.1} # 'phys_gco_prop': the mean proportion of map-independent gcos ('physical gcos') in relation to indepedent gcos
+        self.gco_params={'dist':5000,'length':500,'beta':5,'simple_gco_rate':10,'alpha':0.1} # 'alpha': the weight of uniformed genetic map, where 1 - alpha is the weight of genetic map for recombination
         self.bpstr_recomb=[[],[]]
         self.df_gco=None
 
