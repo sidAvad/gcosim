@@ -254,7 +254,7 @@ class _Node():
                 for d in l:
                     if d['gco']:
                         d['chr'] = c
-                        d['hap'] = h
+                        d['hap_id'] = h
                         gco_dict_list.append(d)
         self.df_gco=pd.DataFrame(gco_dict_list)
 
