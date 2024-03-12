@@ -42,7 +42,7 @@ def sample_breakpoints(mapDF_c,sex,options):
     
     # 3. Sampling complex gco starting breakpoints
     complexgco_startpoints = []   
-    for (bp,gco_status, gco_type) in recomb_breakpoints_physical: #TODO: Bug : We should be looping only over the recombination breakpoints.#gco_type added
+    for (bp,gco_status, gco_type) in recomb_breakpoints_physical: 
         dice_roll=random.choice(list(range(options['beta'])))
         if dice_roll == 1:
             complexgco_loc = bp + np.rint(np.random.normal(loc=0, scale=options['dist']))
@@ -188,7 +188,7 @@ class _Node():
         self.idno=idno
         self.sex=sex
         self.mapDF=mapDF
-        self.gco_params={'dist':5000,'length':500,'beta':5,'simple_gco_rate':10,'alpha':0.1} # 'alpha': the weight of uniformed genetic map, where 1 - alpha is the weight of genetic map for recombination
+        self.gco_params={'dist':5000,'length':300,'beta':5,'simple_gco_rate':12,'alpha':0.1} # 'alpha': the weight of uniformed genetic map, where 1 - alpha is the weight of genetic map for recombination
         self.bpstr_recomb=[[],[]]
         self.df_gco=None
 
@@ -299,7 +299,7 @@ class FounderNode(_Node):
 
 if __name__ == "__main__":
 
-    def simulate_admixed_file(T,nsim,outfile,mapDF):
+    def simulate_admixed_file(T,nsim,outprefix,mapDF):
 
         t=T
         tree=[[] for _ in range(T+1)]
@@ -327,11 +327,11 @@ if __name__ == "__main__":
         tree[T][0].generate_bplines_gco()
 
 
-        with open(outfile+'_{}.recomb.bp'.format(nsim),'w') as f:
+        with open(outprefix+'_{}.recomb.bp'.format(nsim),'w') as f:
             f.write('\n'.join(tree[T][0].bpstr_recomb))
         df_gco_output=tree[T][0].df_gco
         del df_gco_output['gco'] # remove the redundant column 'gco' from output (as they must be gcos)
-        tree[T][0].df_gco.to_csv(outfile+'_{}.gco.bp'.format(nsim), sep='\t', index=False)
+        tree[T][0].df_gco.to_csv(outprefix+'_{}.gco.bp'.format(nsim), sep='\t', index=False)
 
         #print(tree[T][0].inherited_segments)
 
@@ -339,7 +339,8 @@ if __name__ == "__main__":
 
     T=int(sys.argv[1])
     nsim=int(sys.argv[2])
-    mapDF=pd.read_table(sys.argv[3])
+    outprefix=sys.argv[3]
+    mapDF=pd.read_table(sys.argv[4])
     
     seed = datetime.now().timestamp()
     random.seed(seed)
