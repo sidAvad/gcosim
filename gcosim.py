@@ -1,15 +1,11 @@
 #Python script takes in a bpfile and modifies it by introducing gcos accordign to a user specified list of 
 #simulation parameters 
-#TODO:Add documentation everywhere
-#TODO:Add assertions for number of chromosomes etc.
 import numpy as np
 import pandas as pd 
 import sys
 from bisect import bisect
 import math,random
 from datetime import datetime
-#test edit remode copy
-#test of github deskop workflow
 
 def sample_breakpoints(mapDF_c,sex,options):
 
@@ -228,7 +224,7 @@ class _Node():
 
     def generate_bplines_recomb(self):
 
-        headers=['g{}_i{}_s{}_h0'.format(self.generation,self.idno,self.simno),'g{}_i{}_s{}_h1'.format(self.generation,self.idno,self.simno)]
+        headers=['g{}_i{}_h0'.format(self.generation,self.idno),'g{}_i{}_h1'.format(self.generation,self.idno)]
     
         for h in [0,1]:
             #Generate recomb lines only if segments separated by recombinations have been merged
@@ -241,7 +237,7 @@ class _Node():
                 self.bpstr_recomb[h]=headers[h] + ' ' + ''.join(bpstr_list)[:-1]
     
     def generate_bplines_gco(self):
-        headers=['g{}_i{}_s{}_h0'.format(self.generation,self.idno,self.simno),'g{}_i{}_s{}_h1'.format(self.generation,self.idno,self.simno)]
+        headers=['g{}_i{}_h0'.format(self.generation,self.idno),'g{}_i{}_h1'.format(self.generation,self.idno)]
         gco_dict_list = []
         for h in [0,1]:
             #gco_table=pd.DataFrame()
@@ -265,12 +261,10 @@ class ChildNode(_Node):
         assert len(ParentNodes)==2
         assert not ParentNodes[0].sex==ParentNodes[1].sex
         assert not ParentNodes[0].idno==ParentNodes[1].idno
-        assert ParentNodes[0].simno==ParentNodes[1].simno
         assert ParentNodes[0].generation==ParentNodes[1].generation
         
         super().__init__(idno,sex,mapDF)
         self.generation = ParentNodes[0].generation + 1
-        self.simno=ParentNodes[0].simno
         
         tmp_segments=[[],[]]
         #Transmit segments here and update attributes for inherited_haplotype
@@ -287,9 +281,8 @@ class FounderNode(_Node):
     '''
     Datastructure that holds founder individuals 
     '''
-    def __init__(self,idno,sex,simno,mapDF):
+    def __init__(self,idno,sex,mapDF):
         super().__init__(idno,sex,mapDF)
-        self.simno=simno
         self.inherited_segments=[\
                 [[{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno-1),'hapopp':str(2*self.idno),'gco':False,'gco_type':None}],\
                 [{'start':self.chromosome_endpoints[c-1][0],'end':self.chromosome_endpoints[c-1][1],'hap':str(2*self.idno),'hapopp':str(2*self.idno-1),'gco':False,'gco_type':None}]]\
@@ -299,27 +292,33 @@ class FounderNode(_Node):
 
 if __name__ == "__main__":
 
-    def simulate_admixed_file(T,nsim,outprefix,mapDF):
+    def simulate_admixed_file(T,ninds,outprefix,mapDF):
 
         t=T
         tree=[[] for _ in range(T+1)]
-        for i in range(2**T):
-            if i%2:
-                tree[T-t].append(FounderNode(i+1,'male',nsim,mapDF))
+       
+        #Create the top layer of 100 founders
+        for ind in range(ninds):
+            if ind%2:
+                tree[T-t].append(FounderNode(ind+1,'male',mapDF))
             else:
-                tree[T-t].append(FounderNode(i+1,'female',nsim,mapDF))
+                tree[T-t].append(FounderNode(ind+1,'female',mapDF))
         
         t=t-1
-
+        
+        
         while t >= 0:
             print(t)
-            for i in range(2**t):
-                if i%2:
-                    print("creating male : i == {}",format(i))
-                    tree[T-t].append(ChildNode(i+1,'male',mapDF,[tree[T-t-1][2*i],tree[T-t-1][2*i+1]]))
+            for ind in range(ninds):
+                #select random male and random female founder
+                male_founder=random.choice([x for x in tree[T-t-1] if x.sex=='male'])
+                female_founder=random.choice([x for x in tree[T-t-1] if x.sex=='female'])
+                if ind%2:
+                    print("creating male : ind == {}",format(ind))
+                    tree[T-t].append(ChildNode(ind+1,'male',mapDF,[male_founder,female_founder]))
                 else:
-                    print("creating female : i == {}",format(i))
-                    tree[T-t].append(ChildNode(i+1,'female',mapDF,[tree[T-t-1][2*i],tree[T-t-1][2*i+1]]))
+                    print("creating female : ind == {}",format(ind))
+                    tree[T-t].append(ChildNode(ind+1,'female',mapDF,[male_founder,female_founder]))
             t=t-1
         
         tree[T][0].merge_segments() 
@@ -328,17 +327,20 @@ if __name__ == "__main__":
 
 
         with open(outprefix+'_{}.recomb.bp'.format(nsim),'w') as f:
-            f.write('\n'.join(tree[T][0].bpstr_recomb))
-        df_gco_output=tree[T][0].df_gco
-        del df_gco_output['gco'] # remove the redundant column 'gco' from output (as they must be gcos)
-        tree[T][0].df_gco.to_csv(outprefix+'_{}.gco.bp'.format(nsim), sep='\t', index=False)
+            for ind in range(ninds):
+                f.write('\n'.join(tree[T][ind].bpstr_recomb))
+        
+        for ind in range(ninds):
+            df_gco_output=tree[T][ind].df_gco
+            del df_gco_output['gco'] # remove the redundant column 'gco' from output (as they must be gcos)
+            tree[T][ind].df_gco.to_csv(outprefix+'_{}.gco.bp'.format(nsim), sep='\t', index=False)
 
         #print(tree[T][0].inherited_segments)
 
         return()
 
     T=int(sys.argv[1])
-    nsim=int(sys.argv[2])
+    ninds=int(sys.argv[2])
     outprefix=sys.argv[3]
     mapDF=pd.read_table(sys.argv[4])
     
@@ -346,4 +348,4 @@ if __name__ == "__main__":
     random.seed(seed)
     print("Seed used:", seed)
     
-    simulate_admixed_file(T,nsim,'gcos',mapDF)
+    simulate_admixed_file(T,ninds,outprefix,mapDF)
