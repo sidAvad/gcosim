@@ -333,7 +333,7 @@ if __name__ == "__main__":
         for ind in range(ninds):
             df_gco_output=tree[T][ind].df_gco
             del df_gco_output['gco'] # remove the redundant column 'gco' from output (as they must be gcos)
-            tree[T][ind].df_gco.to_csv(outprefix+'_{}.gco.bp'.format(nsim), sep='\t', index=False)
+            tree[T][ind].df_gco.to_csv(outprefix+'.gco.bp', sep='\t', index=False)
 
         #print(tree[T][0].inherited_segments)
 
