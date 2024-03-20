@@ -326,7 +326,7 @@ if __name__ == "__main__":
         tree[T][0].generate_bplines_gco()
 
 
-        with open(outprefix+'_{}.recomb.bp'.format(nsim),'w') as f:
+        with open(outprefix+'.recomb.bp','w') as f:
             for ind in range(ninds):
                 f.write('\n'.join(tree[T][ind].bpstr_recomb))
         
